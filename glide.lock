@@ -1,0 +1,6 @@
+hash: 15dd8c6480bf4b7cb82a269e8547bbf87b1c90a949f8f3e529896e354ab77d35
+updated: 2016-08-21T16:51:36.59747947+08:00
+imports:
+- name: github.com/streadway/amqp
+  version: 2e25825abdbd7752ff08b270d313b93519a0a232
+devImports: []
