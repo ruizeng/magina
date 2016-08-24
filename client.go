@@ -19,6 +19,7 @@ type Client struct {
 	Broker     *Broker
 	Identifier string
 	Channel    *amqp.Channel
+	TopicQueue map[string]string
 }
 
 func (c *Client) initRabbit() error {
@@ -44,15 +45,16 @@ func (c *Client) initRabbit() error {
 		}
 	}
 
+	if c.TopicQueue == nil {
+		c.TopicQueue = make(map[string]string)
+	}
+
 	return nil
 }
 
-func (c *Client) trySendPacket(packet packets.ControlPacket) {
+func (c *Client) trySendPacket(packet packets.ControlPacket) error {
 	log.Printf("try send packet******** \n%v\n**********\n", packet)
-	err := packet.Write(c.Conn)
-	if err != nil {
-		log.Println(err)
-	}
+	return packet.Write(c.Conn)
 }
 
 func (c *Client) handlePublish(pub *packets.PublishPacket) error {
@@ -75,7 +77,7 @@ func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
 	q, err := c.Channel.QueueDeclare(
 		"",    // name
 		false, // durable
-		false, // delete when usused
+		true,  // delete when usused
 		true,  // exclusive
 		false, // no-wait
 		nil,   // arguments
@@ -84,9 +86,11 @@ func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
 		return err
 	}
 
+	topic := sub.Topics[0] // only suport one topic a time now
+
 	err = c.Channel.QueueBind(
-		q.Name,                // queue name
-		sub.Topics[0],         // routing key
+		q.Name, // queue name
+		topic,  // routing key
 		defaultPubsubExchange, // exchange
 		false,
 		nil,
@@ -94,6 +98,8 @@ func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
 	if err != nil {
 		return err
 	}
+
+	c.TopicQueue[topic] = q.Name
 
 	msgs, err := c.Channel.Consume(
 		q.Name, // queue
@@ -119,17 +125,40 @@ func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
 
 	suback := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
 	suback.MessageID = sub.MessageID
+	suback.Qos = sub.Qos
 	c.trySendPacket(suback)
 	return nil
+}
+
+func (c *Client) handleUnsubscribe(unsub *packets.UnsubscribePacket) error {
+	if c.Channel == nil {
+		return fmt.Errorf("client channel not ready")
+	}
+
+	topic := unsub.Topics[0] // only suport one topic a time now
+
+	if queueName, exist := c.TopicQueue[topic]; exist {
+		err := c.Channel.QueueUnbind(queueName, topic, defaultPubsubExchange, nil)
+		delete(c.TopicQueue, topic)
+		if err != nil {
+			return err
+		}
+	}
+	unsuback := packets.NewControlPacket(packets.Unsuback).(*packets.UnsubackPacket)
+	unsuback.MessageID = unsub.MessageID
+	unsuback.Qos = unsub.Qos
+	return c.trySendPacket(unsuback)
 }
 
 func (c *Client) Serve() {
 	defer func() {
 		if c.Channel != nil {
 			c.Channel.Close()
+			c.Channel = nil
 		}
 		if c.Conn != nil {
 			c.Conn.Close()
+			c.Conn = nil
 		}
 	}()
 	needDisconnect := false
@@ -153,22 +182,28 @@ func (c *Client) Serve() {
 				log.Printf("init rabbitmq for client failed: %v\n", err)
 				ca.ReturnCode = packets.ErrRefusedServerUnavailable
 			}
-			c.trySendPacket(ca)
+			err = c.trySendPacket(ca)
 		case *packets.DisconnectPacket:
 			log.Println("disconnecting client...")
 			needDisconnect = true
 		case *packets.PingreqPacket:
 			pres := packets.NewControlPacket(packets.Pingresp)
 			log.Println("ping back to cliend...")
-			c.trySendPacket(pres)
+			err = c.trySendPacket(pres)
 		case *packets.PublishPacket:
 			pub := packet.(*packets.PublishPacket)
-			c.handlePublish(pub)
+			err = c.handlePublish(pub)
 		case *packets.SubscribePacket:
 			sub := packet.(*packets.SubscribePacket)
-			c.handleSubscribe(sub)
+			err = c.handleSubscribe(sub)
+		case *packets.UnsubscribePacket:
+			unsub := packet.(*packets.UnsubscribePacket)
+			err = c.handleUnsubscribe(unsub)
 		default:
 			log.Println("unknown packet: ", packet)
+		}
+		if err != nil {
+			log.Println("handle packat error: ", err)
 		}
 	}
 }
