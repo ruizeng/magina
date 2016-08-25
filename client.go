@@ -67,6 +67,12 @@ func (c *Client) handlePublish(pub *packets.PublishPacket) error {
 			ContentType: "text/plain",
 			Body:        pub.Payload,
 		})
+	if pub.Qos == 1 {
+		puback := packets.NewControlPacket(packets.Puback).(*packets.PubackPacket)
+		puback.MessageID = pub.MessageID
+		puback.Qos = pub.Qos
+		c.trySendPacket(puback)
+	}
 	return err
 }
 
