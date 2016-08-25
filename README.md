@@ -55,7 +55,7 @@ func main() {
 		// server address to listen
 		Addr: ":1883",
 		// rabbit uri
-		
+		RabbitURI: "amqp://guest:guest@localhost:5672/",
 		// callbacks
 		Authenticate:       authenticate,
 		AuthorizePublish:   authorizePublish,
