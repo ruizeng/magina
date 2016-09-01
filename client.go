@@ -1,17 +1,11 @@
 package magina
 
 import (
-	"fmt"
 	"github.com/ruizeng/magina/packets"
 	"github.com/streadway/amqp"
 	"log"
 	"net"
-)
-
-const (
-	defaultPubsubExchange = "pubsub"
-	defaultCrpcExchange   = "crpc"
-	defaultDrpcExchange   = "drpc"
+	"strings"
 )
 
 type Client struct {
@@ -19,7 +13,7 @@ type Client struct {
 	Broker     *Broker
 	Identifier string
 	Channel    *amqp.Channel
-	TopicQueue map[string]string
+	Exchangers map[string]Exchanger
 }
 
 func (c *Client) initRabbit() error {
@@ -30,26 +24,34 @@ func (c *Client) initRabbit() error {
 			return err
 		}
 
-		err = c.Channel.ExchangeDeclare(
-			defaultPubsubExchange, // name
-			"topic",               // type
-			true,                  // durable
-			false,                 // auto-deleted
-			false,                 // internal
-			false,                 // no-wait
-			nil,                   // arguments
-		)
-
+		err = c.initExchangers()
 		if err != nil {
 			return err
 		}
 	}
 
-	if c.TopicQueue == nil {
-		c.TopicQueue = make(map[string]string)
-	}
-
 	return nil
+}
+
+func (c *Client) initExchangers() error {
+	c.Exchangers = make(map[string]Exchanger)
+	c.Exchangers[""] = NewPubSubExchanger(c.Channel)
+	c.Exchangers["rpc"] = NewPRCExchanger(c.Channel)
+	for exc := range c.Exchangers {
+		err := c.Exchangers[exc].Init()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) getExchanger(topic string) Exchanger {
+	if strings.HasPrefix(topic, "rpc://") {
+		return c.Exchangers["rpc"]
+	} else {
+		return c.Exchangers[""]
+	}
 }
 
 func (c *Client) trySendPacket(packet packets.ControlPacket) error {
@@ -58,15 +60,8 @@ func (c *Client) trySendPacket(packet packets.ControlPacket) error {
 }
 
 func (c *Client) handlePublish(pub *packets.PublishPacket) error {
-	if c.Channel == nil {
-		return fmt.Errorf("client channel not ready")
-	}
-	err := c.Channel.Publish(defaultPubsubExchange,
-		pub.TopicName, false, false,
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        pub.Payload,
-		})
+	exchanger := c.getExchanger(pub.TopicName)
+	err := exchanger.Publish(ExchangeMessage{pub.TopicName, pub.Payload})
 	if pub.Qos == 1 {
 		puback := packets.NewControlPacket(packets.Puback).(*packets.PubackPacket)
 		puback.MessageID = pub.MessageID
@@ -77,58 +72,20 @@ func (c *Client) handlePublish(pub *packets.PublishPacket) error {
 }
 
 func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
-	if c.Channel == nil {
-		return fmt.Errorf("client channel not ready")
-	}
-	q, err := c.Channel.QueueDeclare(
-		"",    // name
-		false, // durable
-		true,  // delete when usused
-		true,  // exclusive
-		false, // no-wait
-		nil,   // arguments
-	)
+	topic := sub.Topics[0]
+	exchanger := c.getExchanger(topic)
+	msgs, err := exchanger.Subscribe(topic)
 	if err != nil {
 		return err
 	}
-
-	topic := sub.Topics[0] // only suport one topic a time now
-
-	err = c.Channel.QueueBind(
-		q.Name, // queue name
-		topic,  // routing key
-		defaultPubsubExchange, // exchange
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	c.TopicQueue[topic] = q.Name
-
-	msgs, err := c.Channel.Consume(
-		q.Name, // queue
-		"",     // consumer
-		true,   // auto ack
-		false,  // exclusive
-		false,  // no local
-		false,  // no wait
-		nil,    // args
-	)
-	if err != nil {
-		return err
-	}
-
 	go func() {
 		for d := range msgs {
 			pub := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
-			pub.Payload = d.Body
-			pub.TopicName = d.RoutingKey
+			pub.Payload = d.Payload
+			pub.TopicName = d.Topic
 			c.trySendPacket(pub)
 		}
 	}()
-
 	suback := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
 	suback.MessageID = sub.MessageID
 	suback.Qos = sub.Qos
@@ -137,19 +94,14 @@ func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
 }
 
 func (c *Client) handleUnsubscribe(unsub *packets.UnsubscribePacket) error {
-	if c.Channel == nil {
-		return fmt.Errorf("client channel not ready")
-	}
-
 	topic := unsub.Topics[0] // only suport one topic a time now
 
-	if queueName, exist := c.TopicQueue[topic]; exist {
-		err := c.Channel.QueueUnbind(queueName, topic, defaultPubsubExchange, nil)
-		delete(c.TopicQueue, topic)
-		if err != nil {
-			return err
-		}
+	exchanger := c.getExchanger(topic)
+	err := exchanger.Unsubscribe(topic)
+	if err != nil {
+		return err
 	}
+
 	unsuback := packets.NewControlPacket(packets.Unsuback).(*packets.UnsubackPacket)
 	unsuback.MessageID = unsub.MessageID
 	unsuback.Qos = unsub.Qos
@@ -194,7 +146,7 @@ func (c *Client) Serve() {
 			needDisconnect = true
 		case *packets.PingreqPacket:
 			pres := packets.NewControlPacket(packets.Pingresp)
-			log.Println("ping back to cliend...")
+			log.Println("ping back to client...")
 			err = c.trySendPacket(pres)
 		case *packets.PublishPacket:
 			pub := packet.(*packets.PublishPacket)

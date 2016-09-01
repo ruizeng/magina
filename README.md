@@ -10,13 +10,13 @@ This project is under development and not production ready. Issues and contribut
 * based on [RabbitMQ](http://www.rabbitmq.com)'s stable, reliable and efficient message service.
 * suport QoS 0 and 1.
 * easy to scale up because of the share nothing implementation. 
+* extend topic schema to support RPC(non-mqtt-official).
 
 ## Features in the near future.
 
 * suport QoS 2.
 * suport websocket proxy.
 * suport TLS/SSL.
-* extend topic schema to support RPC(non-mqtt-official).
 
 ## How to use 
 
