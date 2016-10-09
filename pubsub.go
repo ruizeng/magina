@@ -2,6 +2,8 @@ package magina
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/streadway/amqp"
 )
 
@@ -38,12 +40,20 @@ func (pubsub *PubSubExchanger) Init() error {
 	)
 }
 
+func (pubsub *PubSubExchanger) convMQTTTopic2AMQP(topic string) string {
+	return strings.Replace(strings.Replace(topic, "/", ".", -1), "+", "*", -1)
+}
+
+func (pubsub *PubSubExchanger) convAMQPopic2MQTT(topic string) string {
+	return strings.Replace(strings.Replace(topic, ".", "/", -1), "*", "+", -1)
+}
+
 func (pubsub *PubSubExchanger) Publish(msg ExchangeMessage) error {
 	if pubsub.Channel == nil {
 		return fmt.Errorf("client channel not ready")
 	}
 	err := pubsub.Channel.Publish(defaultPubsubExchange,
-		msg.Topic, false, false,
+		pubsub.convMQTTTopic2AMQP(msg.Topic), false, false,
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        msg.Payload,
@@ -70,8 +80,8 @@ func (pubsub *PubSubExchanger) Subscribe(topic string) (chan ExchangeMessage, er
 
 	err = pubsub.Channel.QueueBind(
 		q.Name, // queue name
-		topic,  // routing key
-		defaultPubsubExchange, // exchange
+		pubsub.convMQTTTopic2AMQP(topic), // routing key
+		defaultPubsubExchange,            // exchange
 		false,
 		nil,
 	)
@@ -112,7 +122,7 @@ func (pubsub *PubSubExchanger) Unsubscribe(topic string) error {
 	}
 
 	if queueName, exist := pubsub.TopicQueue[topic]; exist {
-		err := pubsub.Channel.QueueUnbind(queueName, topic, defaultPubsubExchange, nil)
+		err := pubsub.Channel.QueueUnbind(queueName, pubsub.convMQTTTopic2AMQP(topic), defaultPubsubExchange, nil)
 		delete(pubsub.TopicQueue, topic)
 
 		close(pubsub.TopicChan[topic])
