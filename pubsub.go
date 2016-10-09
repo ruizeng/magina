@@ -108,7 +108,7 @@ func (pubsub *PubSubExchanger) Subscribe(topic string) (chan ExchangeMessage, er
 	pubsub.TopicChan[topic] = msgChan
 	go func() {
 		for d := range msgs {
-			msgChan <- ExchangeMessage{d.RoutingKey, d.Body}
+			msgChan <- ExchangeMessage{pubsub.convAMQPopic2MQTT(d.RoutingKey), d.Body}
 		}
 		close(msgChan)
 	}()
