@@ -1,9 +1,11 @@
 package magina
 
 import (
-	"github.com/streadway/amqp"
+	"crypto/tls"
 	"log"
 	"net"
+
+	"github.com/streadway/amqp"
 )
 
 // callback functions for authentication and authorization
@@ -20,6 +22,8 @@ type Broker struct {
 	SuportRPC bool
 	// rabbitmq connection
 	RabbitConnection *amqp.Connection
+	// if use mqtts, set this
+	TLSConfig *tls.Config
 	// callbacks
 	Authenticate       AuthenticateFunc
 	AuthorizePublish   AuthorizePublishFunc
@@ -45,7 +49,13 @@ func (b *Broker) handleConnection(conn net.Conn) {
 func (b *Broker) ListenAndServe() {
 	b.InitRabbitConn()
 	log.Println("listen and serve mqtt broker on " + b.Addr)
-	listener, err := net.Listen("tcp", b.Addr)
+	var listener net.Listener
+	var err error
+	if b.TLSConfig != nil {
+		listener, err = tls.Listen("tcp", b.Addr, b.TLSConfig)
+	} else {
+		listener, err = net.Listen("tcp", b.Addr)
+	}
 	failOnError(err)
 	for {
 		conn, err := listener.Accept()
