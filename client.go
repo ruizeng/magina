@@ -1,11 +1,12 @@
 package magina
 
 import (
-	"github.com/ruizeng/magina/packets"
-	"github.com/streadway/amqp"
 	"log"
 	"net"
 	"strings"
+
+	"github.com/ruizeng/magina/packets"
+	"github.com/streadway/amqp"
 )
 
 type Client struct {
@@ -126,7 +127,7 @@ func (c *Client) Serve() {
 		}
 		packet, err := packets.ReadPacket(c.Conn)
 		if err != nil {
-			log.Printf("reading packets from connection error: %v", err)
+			// log.Printf("reading packets from connection error: %v", err)
 			break
 		}
 		log.Printf("packet received =========\n%v\n===============\n", packet)
