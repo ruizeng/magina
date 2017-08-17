@@ -4,17 +4,21 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/ruizeng/magina/packets"
 	"github.com/streadway/amqp"
 )
 
 type Client struct {
-	Conn       net.Conn
-	Broker     *Broker
-	Identifier string
-	Channel    *amqp.Channel
-	Exchangers map[string]Exchanger
+	Conn              net.Conn
+	Broker            *Broker
+	Identifier        string
+	LastHeartbeat     time.Time
+	KeepAliveInterval int
+	needDisconnect    bool
+	Channel           *amqp.Channel
+	Exchangers        map[string]Exchanger
 }
 
 func (c *Client) initRabbit() error {
@@ -109,6 +113,29 @@ func (c *Client) handleUnsubscribe(unsub *packets.UnsubscribePacket) error {
 	return c.trySendPacket(unsuback)
 }
 
+func (c *Client) checkHeartbeat() {
+	for {
+		if c.needDisconnect {
+			break
+		}
+		checkInterval := c.KeepAliveInterval
+		if checkInterval == 0 {
+			checkInterval = 60
+		}
+		log.Printf("timer, check interval: %v", checkInterval)
+		time.Sleep(time.Second * time.Duration(checkInterval))
+		// no ping for 3 times
+		if time.Since(c.LastHeartbeat) > time.Second*time.Duration(3*checkInterval) {
+			log.Printf("client lost: %v", c.Identifier)
+			if c.Broker.OnClientOffline != nil {
+				c.Broker.OnClientOffline(c)
+			}
+			c.needDisconnect = true
+		}
+	}
+}
+
+// Serve serves a mqtt client.
 func (c *Client) Serve() {
 	defer func() {
 		if c.Channel != nil {
@@ -120,14 +147,14 @@ func (c *Client) Serve() {
 			c.Conn = nil
 		}
 	}()
-	needDisconnect := false
 	for {
-		if needDisconnect {
+		if c.needDisconnect {
 			break
 		}
 		packet, err := packets.ReadPacket(c.Conn)
 		if err != nil {
 			// log.Printf("reading packets from connection error: %v", err)
+			c.needDisconnect = true
 			break
 		}
 		log.Printf("packet received =========\n%v\n===============\n", packet)
@@ -136,15 +163,30 @@ func (c *Client) Serve() {
 			conn := packet.(*packets.ConnectPacket)
 			ca := packets.NewControlPacket(packets.Connack).(*packets.ConnackPacket)
 			ca.ReturnCode = conn.Validate()
+			c.Identifier = conn.ClientIdentifier
+			c.KeepAliveInterval = int(conn.KeepaliveTimer)
+			if c.Broker.Authenticate != nil {
+				if !c.Broker.Authenticate(c, string(conn.Username), string(conn.Password)) {
+					ca.ReturnCode = packets.ErrRefusedBadUsernameOrPassword
+				}
+			}
 			err = c.initRabbit()
 			if err != nil {
 				log.Printf("init rabbitmq for client failed: %v\n", err)
 				ca.ReturnCode = packets.ErrRefusedServerUnavailable
 			}
+			if ca.ReturnCode != packets.Accepted {
+				c.needDisconnect = true
+			} else {
+				if c.Broker.OnClientOnline != nil {
+					go func() { c.Broker.OnClientOnline(c) }()
+				}
+				go c.checkHeartbeat()
+			}
 			err = c.trySendPacket(ca)
 		case *packets.DisconnectPacket:
 			log.Println("disconnecting client...")
-			needDisconnect = true
+			c.needDisconnect = true
 		case *packets.PingreqPacket:
 			pres := packets.NewControlPacket(packets.Pingresp)
 			log.Println("ping back to client...")
@@ -164,5 +206,6 @@ func (c *Client) Serve() {
 		if err != nil {
 			log.Println("handle packat error: ", err)
 		}
+		c.LastHeartbeat = time.Now()
 	}
 }

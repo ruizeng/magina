@@ -8,11 +8,22 @@ import (
 	"github.com/streadway/amqp"
 )
 
-// callback functions for authentication and authorization
+// AuthenticateFunc AuthorizePublishFunc AuthorizeSubscribeFunc callback functions for authentication and authorization
 type AuthenticateFunc func(client *Client, username string, password string) bool
+
+// AuthorizePublishFunc callback functions for authentication and authorization
 type AuthorizePublishFunc func(client *Client, topic string) bool
+
+// AuthorizeSubscribeFunc callback functions for authentication and authorization
 type AuthorizeSubscribeFunc func(client *Client, topic string) bool
 
+// OnClientOnlineCB callback function when client connect success
+type OnClientOnlineCB func(client *Client)
+
+// OnClientOfflineCB callback function when losing heartbeat from client
+type OnClientOfflineCB func(client *Client)
+
+// Broker is MQTT main service
 type Broker struct {
 	// server address to listen
 	Addr string
@@ -28,8 +39,11 @@ type Broker struct {
 	Authenticate       AuthenticateFunc
 	AuthorizePublish   AuthorizePublishFunc
 	AuthorizeSubscribe AuthorizeSubscribeFunc
+	OnClientOnline     OnClientOnlineCB
+	OnClientOffline    OnClientOfflineCB
 }
 
+// InitRabbitConn init rabbitmq connection.
 func (b *Broker) InitRabbitConn() {
 	if b.RabbitConnection == nil {
 		conn, err := amqp.Dial(b.RabbitURI)
@@ -46,6 +60,7 @@ func (b *Broker) handleConnection(conn net.Conn) {
 	client.Serve()
 }
 
+// ListenAndServe serves for mqtt connections.
 func (b *Broker) ListenAndServe() {
 	b.InitRabbitConn()
 	log.Println("listen and serve mqtt broker on " + b.Addr)
