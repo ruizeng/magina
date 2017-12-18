@@ -19,6 +19,7 @@ type Client struct {
 	needDisconnect    bool
 	Channel           *amqp.Channel
 	Exchangers        map[string]Exchanger
+	SubscribeTopics   map[string]string
 }
 
 func (c *Client) initRabbit() error {
@@ -32,6 +33,16 @@ func (c *Client) initRabbit() error {
 		err = c.initExchangers()
 		if err != nil {
 			return err
+		}
+
+		if c.SubscribeTopics == nil {
+			c.SubscribeTopics = make(map[string]string)
+		}
+		for topic := range c.SubscribeTopics {
+			err := c.subscribe(topic)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -54,9 +65,8 @@ func (c *Client) initExchangers() error {
 func (c *Client) getExchanger(topic string) Exchanger {
 	if strings.HasPrefix(topic, "rpc://") {
 		return c.Exchangers["rpc"]
-	} else {
-		return c.Exchangers[""]
 	}
+	return c.Exchangers[""]
 }
 
 func (c *Client) trySendPacket(packet packets.ControlPacket) error {
@@ -76,8 +86,7 @@ func (c *Client) handlePublish(pub *packets.PublishPacket) error {
 	return err
 }
 
-func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
-	topic := sub.Topics[0]
+func (c *Client) subscribe(topic string) error {
 	exchanger := c.getExchanger(topic)
 	msgs, err := exchanger.Subscribe(topic)
 	if err != nil {
@@ -91,6 +100,16 @@ func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
 			c.trySendPacket(pub)
 		}
 	}()
+	return nil
+}
+
+func (c *Client) handleSubscribe(sub *packets.SubscribePacket) error {
+	topic := sub.Topics[0]
+	c.SubscribeTopics[topic] = topic
+	err := c.subscribe(topic)
+	if err != nil {
+		return err
+	}
 	suback := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
 	suback.MessageID = sub.MessageID
 	suback.Qos = sub.Qos
@@ -124,8 +143,8 @@ func (c *Client) checkHeartbeat() {
 		}
 		log.Printf("timer, check interval: %v", checkInterval)
 		time.Sleep(time.Second * time.Duration(checkInterval))
-		// no ping for 3 times
-		if time.Since(c.LastHeartbeat) > time.Second*time.Duration(3*checkInterval) {
+		// no ping for 2 times
+		if time.Since(c.LastHeartbeat) > time.Second*time.Duration(2*checkInterval) {
 			log.Printf("client lost: %v", c.Identifier)
 			if c.Broker.OnClientOffline != nil {
 				c.Broker.OnClientOffline(c)
@@ -205,7 +224,18 @@ func (c *Client) Serve() {
 		}
 		if err != nil {
 			log.Println("handle packat error: ", err)
+			if err == amqp.ErrClosed {
+				c.Channel = nil
+				err := c.initRabbit()
+				if err != nil {
+					log.Println("wanning: reinit rabbit error: ", err)
+					continue
+				}
+			}
 		}
 		c.LastHeartbeat = time.Now()
+		if c.Broker.OnClientHeartbeat != nil {
+			go func() { c.Broker.OnClientHeartbeat(c) }()
+		}
 	}
 }

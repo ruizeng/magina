@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"log"
 	"net"
+	"time"
 
 	"github.com/streadway/amqp"
 )
@@ -23,6 +24,9 @@ type OnClientOnlineCB func(client *Client)
 // OnClientOfflineCB callback function when losing heartbeat from client
 type OnClientOfflineCB func(client *Client)
 
+// OnClientHeartbeatCB callback function when receive a client heartbeat
+type OnClientHeartbeatCB func(client *Client)
+
 // Broker is MQTT main service
 type Broker struct {
 	// server address to listen
@@ -41,15 +45,39 @@ type Broker struct {
 	AuthorizeSubscribe AuthorizeSubscribeFunc
 	OnClientOnline     OnClientOnlineCB
 	OnClientOffline    OnClientOfflineCB
+	OnClientHeartbeat  OnClientHeartbeatCB
 }
 
 // InitRabbitConn init rabbitmq connection.
 func (b *Broker) InitRabbitConn() {
 	if b.RabbitConnection == nil {
 		conn, err := amqp.Dial(b.RabbitURI)
-		failOnError(err)
+		if err != nil {
+			time.Sleep(time.Second * 3)
+			failOnError(err)
+		}
 		b.RabbitConnection = conn
 	}
+
+	// check for disconnection
+	go func() {
+		for {
+			// Waits here for the connection to be closed
+			log.Printf("connection closing: %s\n", <-b.RabbitConnection.NotifyClose(make(chan *amqp.Error)))
+			// it's time to reconnect
+			for {
+				conn, err := amqp.Dial(b.RabbitURI)
+				if err != nil {
+					log.Printf("reconnect error: %v, try again after 3 seconds...\n", err)
+					time.Sleep(time.Second * 3)
+				} else {
+					log.Printf("reconnect rabbitmq success! \n")
+					b.RabbitConnection = conn
+					break
+				}
+			}
+		}
+	}()
 }
 
 func (b *Broker) handleConnection(conn net.Conn) {
