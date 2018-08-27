@@ -10,6 +10,7 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// Client a client servces an MQTT remote client connection
 type Client struct {
 	Conn              net.Conn
 	Broker            *Broker

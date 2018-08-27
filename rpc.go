@@ -2,27 +2,31 @@ package magina
 
 import (
 	"fmt"
-	"github.com/streadway/amqp"
 	"math/rand"
 	"strings"
+
+	"github.com/streadway/amqp"
 )
 
+// RPCExchanger is the exchange in RabbitMQ for rpcs.
 type RPCExchanger struct {
 	Channel          *amqp.Channel
 	RPCQueues        map[string]string
-	RPCCorrelationId map[string]string
+	RPCCorrelationID map[string]string
 	MsgChan          map[string]chan ExchangeMessage
 }
 
+// NewPRCExchanger creates a new rpc exchanger.
 func NewPRCExchanger(channel *amqp.Channel) *RPCExchanger {
 	return &RPCExchanger{
 		Channel: channel,
 	}
 }
 
+// Init exchange
 func (rpc *RPCExchanger) Init() error {
 	rpc.RPCQueues = make(map[string]string)
-	rpc.RPCCorrelationId = make(map[string]string)
+	rpc.RPCCorrelationID = make(map[string]string)
 	rpc.MsgChan = make(map[string]chan ExchangeMessage)
 	return rpc.Channel.ExchangeDeclare(
 		defaultRPCExchange, // name
@@ -56,6 +60,7 @@ func (rpc *RPCExchanger) randomString(l int) string {
 	return string(bytes)
 }
 
+// Publish send a rpc request or response
 func (rpc *RPCExchanger) Publish(msg ExchangeMessage) error {
 	if rpc.Channel == nil {
 		return fmt.Errorf("client channel not ready")
@@ -68,7 +73,7 @@ func (rpc *RPCExchanger) Publish(msg ExchangeMessage) error {
 	} else if reqOrResp == "request" {
 		// send rpc request as rpc client.
 		fmt.Println("send rpc request as rpc client:", method)
-		rpc.RPCCorrelationId[method] = rpc.randomString(32)
+		rpc.RPCCorrelationID[method] = rpc.randomString(32)
 		err := rpc.Channel.Publish(
 			defaultRPCExchange, // exchange
 			method,             // routing key
@@ -76,7 +81,7 @@ func (rpc *RPCExchanger) Publish(msg ExchangeMessage) error {
 			false,              // immediate
 			amqp.Publishing{
 				ContentType:   "text/plain",
-				CorrelationId: rpc.RPCCorrelationId[method],
+				CorrelationId: rpc.RPCCorrelationID[method],
 				ReplyTo:       rpc.RPCQueues[method],
 				Body:          msg.Payload,
 			})
@@ -84,11 +89,12 @@ func (rpc *RPCExchanger) Publish(msg ExchangeMessage) error {
 			return err
 		}
 	} else {
-		return fmt.Errorf("unknown request or response type :", method)
+		return fmt.Errorf("unknown request or response type : %v", method)
 	}
 	return nil
 }
 
+// Subscribe waits for prc request or response.
 func (rpc *RPCExchanger) Subscribe(topic string) (chan ExchangeMessage, error) {
 	if rpc.Channel == nil {
 		return nil, fmt.Errorf("client channel not ready")
@@ -136,7 +142,7 @@ func (rpc *RPCExchanger) Subscribe(topic string) (chan ExchangeMessage, error) {
 		go func() {
 			for d := range msgs {
 				fmt.Println("received rpc response: ", method, d)
-				if rpc.RPCCorrelationId[method] == d.CorrelationId {
+				if rpc.RPCCorrelationID[method] == d.CorrelationId {
 					msgChan <- ExchangeMessage{topic, d.Body}
 				}
 			}
@@ -147,10 +153,11 @@ func (rpc *RPCExchanger) Subscribe(topic string) (chan ExchangeMessage, error) {
 	} else if reqOrResp == "request" {
 		return nil, nil
 	} else {
-		return nil, fmt.Errorf("unknown request or response type :", method)
+		return nil, fmt.Errorf("unknown request or response type : %v", method)
 	}
 }
 
+// Unsubscribe rpc topic.
 func (rpc *RPCExchanger) Unsubscribe(topic string) error {
 	if rpc.Channel == nil {
 		return fmt.Errorf("client channel not ready")
@@ -161,7 +168,7 @@ func (rpc *RPCExchanger) Unsubscribe(topic string) error {
 	if queueName, exist := rpc.RPCQueues[method]; exist {
 		err := rpc.Channel.QueueUnbind(queueName, topic, defaultPubsubExchange, nil)
 		delete(rpc.RPCQueues, method)
-		delete(rpc.RPCCorrelationId, method)
+		delete(rpc.RPCCorrelationID, method)
 
 		close(rpc.MsgChan[method])
 		delete(rpc.MsgChan, method)

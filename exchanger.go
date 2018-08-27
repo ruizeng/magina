@@ -1,4 +1,3 @@
-// exchanger is an interface for handling pub/sub messages
 package magina
 
 const (
@@ -6,11 +5,13 @@ const (
 	defaultRPCExchange    = "rpc"
 )
 
+// ExchangeMessage is a message in exchange
 type ExchangeMessage struct {
 	Topic   string
 	Payload []byte
 }
 
+// Exchanger is an interface for handling pub/sub messages
 type Exchanger interface {
 	// init the exchanger
 	Init() error

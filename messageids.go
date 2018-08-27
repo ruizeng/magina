@@ -4,10 +4,9 @@ import (
 	"sync"
 )
 
-// message id is 16 bit message id as specified by the MQTT spec.
+// MessageIds is 16 bit message id as specified by the MQTT spec.
 // In general, these values should not be depended upon by
 // the client application.
-
 type MessageIds struct {
 	sync.RWMutex
 	index map[uint16]Token

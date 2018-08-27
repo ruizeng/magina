@@ -7,6 +7,7 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// PubSubExchanger is the exchange in RabbitMQ for publish & subscribe.
 type PubSubExchanger struct {
 	TopicQueue map[string]string
 	TopicChan  map[string]chan ExchangeMessage
@@ -14,12 +15,14 @@ type PubSubExchanger struct {
 	Channel    *amqp.Channel
 }
 
+// NewPubSubExchanger creates a new exchange for pubsub.
 func NewPubSubExchanger(channel *amqp.Channel) *PubSubExchanger {
 	return &PubSubExchanger{
 		Channel: channel,
 	}
 }
 
+// Init exchange
 func (pubsub *PubSubExchanger) Init() error {
 	if pubsub.TopicQueue == nil {
 		pubsub.TopicQueue = make(map[string]string)
@@ -48,6 +51,7 @@ func (pubsub *PubSubExchanger) convAMQPopic2MQTT(topic string) string {
 	return strings.Replace(strings.Replace(topic, ".", "/", -1), "*", "+", -1)
 }
 
+// Publish a massage
 func (pubsub *PubSubExchanger) Publish(msg ExchangeMessage) error {
 	if pubsub.Channel == nil {
 		return fmt.Errorf("client channel not ready")
@@ -61,6 +65,7 @@ func (pubsub *PubSubExchanger) Publish(msg ExchangeMessage) error {
 	return err
 }
 
+// Subscribe topic
 func (pubsub *PubSubExchanger) Subscribe(topic string) (chan ExchangeMessage, error) {
 
 	if pubsub.Channel == nil {
@@ -115,6 +120,7 @@ func (pubsub *PubSubExchanger) Subscribe(topic string) (chan ExchangeMessage, er
 	return pubsub.TopicChan[topic], nil
 }
 
+// Unsubscribe topic
 func (pubsub *PubSubExchanger) Unsubscribe(topic string) error {
 
 	if pubsub.Channel == nil {

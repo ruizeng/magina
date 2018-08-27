@@ -4,6 +4,7 @@ package main
 
 import (
 	"flag"
+
 	"github.com/ruizeng/magina"
 )
 
